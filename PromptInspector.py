@@ -1,24 +1,20 @@
 import io
-import os
-import toml, json
+import toml
+import json
 import asyncio
 import gzip
-import gradio_client
+import traceback
+import yaml
 import discord
-from discord import Intents, Embed, ButtonStyle, Message, Attachment, File, RawReactionActionEvent, ApplicationContext
+from discord import Intents, Embed, ButtonStyle, Message, Attachment, File, RawReactionActionEvent, ApplicationContext, Color
 from discord.ext import commands
 from discord.ui import View, button
 from PIL import Image
 from collections import OrderedDict
-try:
-    import dotenv
-    dotenv.load_dotenv()
-except:
-    pass
+
 CONFIG = toml.load('config.toml')
 monitored = CONFIG.get('MONITORED_CHANNEL_IDS', [])
 SCAN_LIMIT_BYTES = CONFIG.get('SCAN_LIMIT_BYTES', 40 * 1024**2)  # Default 40 MB
-GRADCL = gradio_client.Client("https://yoinked-da-nsfw-checker.hf.space/")
 intents = Intents.default() | Intents.message_content | Intents.members
 client = commands.Bot(intents=intents)
 
@@ -66,7 +62,7 @@ def get_params_from_string(param_str):
 
 
 def get_embed(embed_dict, context: Message):
-    embed = Embed(color=context.author.color)
+    embed = Embed(color=discord.Color.from_rgb(*CONFIG.get("EMBED_COLOR")))
     i = 0
     for key, value in embed_dict.items():
         if key.strip() == "" or value.strip() == "":
@@ -75,10 +71,29 @@ def get_embed(embed_dict, context: Message):
         if i >= 25:
             continue
         embed.add_field(name=key[:255], value=value[:1023], inline='Prompt' not in key)
-    embed.set_footer(text=f'Posted by {context.author} - nya~', icon_url=context.author.display_avatar)
+    embed.set_footer(text=f'Posted by {context.author}', icon_url=context.author.display_avatar)
     return embed
 
+def get_embed_nai(embed_dict_orig, context: Message):
+    try:
+        embed_dict = json.loads(embed_dict_orig["Comment"])
+        embed = Embed(color=discord.Color.from_rgb(*CONFIG.get("EMBED_COLOR")))
+        embed.add_field(name="Prompt", value=embed_dict['prompt'], inline=False)
+        embed.add_field(name="Negative Prompt", value=embed_dict['uc'], inline=False)
+        blacklist = ['prompt', 'uc', 'signed_hash', 'request_type']
 
+        embed_dict['Model Hash'] = embed_dict_orig['Source'].split()[-1:][0].lower()
+        for key, value in embed_dict.items():
+            if value == None or value == 'None' or key in blacklist:
+                continue
+            embed.add_field(name=key, value=value, inline=True)
+            if len(embed.fields) == 24:
+                embed.add_field(name='Model Hash', value=embed_dict['Model Hash'], inline=True)
+                break
+        embed.set_footer(text=f'Posted by {context.author}', icon_url=context.author.display_avatar)
+        return embed
+    except Exception as error:
+        print(traceback.format_exc())
 def read_info_from_image_stealth(image: Image.Image):
     # trying to read stealth pnginfo
     width, height = image.size
@@ -196,50 +211,50 @@ async def privacy(ctx):
     """
     Returns our privacy policy.
     """
-    base = Embed(title="Privacy Policy", color=ctx.author.color)
-    base.add_field(name="What we collect", value="Other than simple data from your user (mainly username, role color) not much else other than when an image is sent in a **monitored channel**, the bot downloads it to its RAM and processes it.\n***We do not store any of your data/images.***")
-    base.add_field(name="What we use/store", value="Whenever the bot has an error decoding an image, it will print out the error and data to the console. The data consists of the raw bytes in the image metadata. Whenever a mod/admin toggles a channel on/off, the bot will save the ID to storage in case of it crashing. Other than that, that is all we use/store.")
-    base.add_field(name="What we share", value="***We do not share any of your data/images.*** There's no use for them lol.")
-    base.add_field(name="Open Source? Where?!", value="Yes, its [here](https://github.com/yoinked-h/PI-Chan). We are licensed under the [MIT License](https://github.com/yoinked-h/PI-Chan/blob/main/LICENSE). \nThe code is based off salt's base and NoCrypt's fork. ")
-    base.set_footer(text=f"Maintained by <@444257402007846942>, this channel is {'not' if not ctx.channel_id in monitored else ''} monitored", icon_url=ctx.author.display_avatar)
-    base.set_image(url="https://cdn.discordapp.com/avatars/1159983729591210004/8666dba0c893163fcf0e01629e85f6e8?size=1024")
+    base = Embed(title="Privacy Policy", color=discord.Color.from_rgb(*CONFIG.get("EMBED_COLOR")))
+    base.add_field(name="What we collect", value="Other than simple data from your user (mainly username, role color) not much else other than when an image is sent in a **monitored channel**, the bot downloads it to its RAM and processes it.\n***We do not store any of your data/images.***", inline=False)
+    base.add_field(name="What we use/store", value="Whenever the bot has an error decoding an image, it will print out the error and data to the console. The data consists of the raw bytes in the image metadata. Whenever a mod/admin toggles a channel on/off, the bot will save the ID to storage in case of it crashing. Other than that, that is all we use/store.", inline=False)
+    base.add_field(name="What we share", value="***We do not share any of your data/images.*** There's no use for them lol.", inline=False)
+    base.add_field(name="Open Source? Where?!", value="Yes, its [here](https://github.com/itsolegdm/PI-Chan). We are licensed under the [MIT License](https://github.com/itsolegdm/PI-Chan/blob/main/LICENSE). \nThe code is based off salt's base and yoinked's's fork. ", inline=False)
+    base.set_footer(text=f"Maintained by @itsolegdm, this channel is {'not' if not ctx.channel_id in monitored else ''} monitored", icon_url=ctx.author.display_avatar)
+    # base.set_image(url="https://cdn.discordapp.com/avatars/1159983729591210004/8666dba0c893163fcf0e01629e85f6e8?size=1024")
     await ctx.respond(embed=base, ephemeral=True)
-@client.slash_command()
-async def toggle_channel(ctx: ApplicationContext, channel_id):
-    """
-    Adds/Removes a channel to the list of monitored channels for this bot.
-    channel_id: The ID of the channel to add. (defaults to current channel)
-    
-    Permissions:
-    - Manage Messages
-    """
-    #perms
-    if not ctx.author.guild_permissions.manage_messages:
-        await ctx.respond("You do not have permission to use this command.", ephemeral=True)
-        return
-    try:
-        if channel_id:
-            channel_id = int(channel_id)
-        else:
-            channel_id = ctx.channel_id
-        if channel_id in monitored:
-            monitored.remove(channel_id)
-            await ctx.respond(f"Removed {channel_id} from the list of monitored channels.", ephemeral=True)
-        else:
-            monitored.append(channel_id)
-            await ctx.respond(f"Added {channel_id} to the list of monitored channels.", ephemeral=True)
-        #update the config
-        cfg = toml.load('config.toml')
-        cfg['MONITORED_CHANNEL_IDS'] = monitored
-        toml.dump(cfg, open('config.toml', 'w'))
-    except ValueError:
-        await ctx.respond("Invalid channel ID.", ephemeral=True)
-        return
-    except Exception as e:
-        print(f"{type(e).__name__}: {e}")
-        await ctx.respond(f"Internal bot error, please DM yoinked.", ephemeral=True)
+# @client.slash_command()
+# async def toggle_channel(ctx: ApplicationContext, channel_id):
+#     """
+#     Adds/Removes a channel to the list of monitored channels for this bot.
+#     channel_id: The ID of the channel to add. (defaults to current channel)
+#
+#     Permissions:
+#     - Manage Messages
+#     """
+#     #perms
+#     if not ctx.author.guild_permissions.manage_messages:
+#         await ctx.respond("You do not have permission to use this command.", ephemeral=True)
+#         return
+#     try:
+#         if channel_id:
+#             channel_id = int(channel_id)
+#         else:
+#             channel_id = ctx.channel_id
+#         if channel_id in monitored:
+#             monitored.remove(channel_id)
+#             await ctx.respond(f"Removed {channel_id} from the list of monitored channels.", ephemeral=True)
+#         else:
+#             monitored.append(channel_id)
+#             await ctx.respond(f"Added {channel_id} to the list of monitored channels.", ephemeral=True)
+#         #update the config
+#         cfg = toml.load('config.toml')
+#         cfg['MONITORED_CHANNEL_IDS'] = monitored
+#         toml.dump(cfg, open('config.toml', 'w'))
+#     except ValueError:
+#         await ctx.respond("Invalid channel ID.", ephemeral=True)
+#         return
+#     except Exception as e:
+#         print(f"{type(e).__name__}: {e}")
+#         await ctx.respond(f"Internal bot error, please DM yoinked.", ephemeral=True)
         
-    
+
 
 @client.event
 async def on_ready():
@@ -254,7 +269,9 @@ async def on_message(message: Message):
             metadata = OrderedDict()
             await read_attachment_metadata(i, attachment, metadata)
             if metadata:
-                await message.add_reaction('🔎')
+                # await message.add_reaction('🔎')
+                emoji_shit = await message.guild.fetch_emoji(CONFIG.get("EMOJI_ID"))
+                await message.add_reaction(emoji_shit)
                 return
 
 
@@ -282,26 +299,33 @@ async def read_attachment_metadata(i: int, attachment: Attachment, metadata: Ord
     try:
         image_data = await attachment.read()
         with Image.open(io.BytesIO(image_data)) as img:
+            # try:
+            #     info = img.info['parameters']
+            # except:
+            #     info = read_info_from_image_stealth(img)
+            info = None
             if img.info:
                 if 'parameters' in img.info:
                     info = img.info['parameters']
                 elif 'prompt' in img.info:
                     info = img.info['prompt']
-                else:
-                    info = img.info["Comment"]
+                elif img.info["Software"] == "NovelAI":
+                    info = img.info
+                    # info["Software"] = img.info["Software"]
+                    # info["Source"] = img.info["Source"]
             else:
                 info = read_info_from_image_stealth(img)
-                
+
             if info:
                 metadata[i] = info
-    except Exception as error:
-        print(f"{type(error).__name__}: {error}")
+    except:
+        print(traceback.format_exc())
 
 
 @client.event
 async def on_raw_reaction_add(ctx: RawReactionActionEvent):
     """Send image metadata in reacted post to user DMs"""
-    if ctx.emoji.name not in ['🔎', '❔'] or ctx.channel_id not in monitored or ctx.member.bot:
+    if ctx.emoji.id != CONFIG.get("EMOJI_ID") or ctx.channel_id not in monitored or ctx.member.bot:
         return
     channel = client.get_channel(ctx.channel_id)
     message = await channel.fetch_message(ctx.message_id)
@@ -310,13 +334,13 @@ async def on_raw_reaction_add(ctx: RawReactionActionEvent):
     attachments = [a for a in message.attachments if a.filename.lower().endswith(".png")]
     if not attachments:
         return
-    if ctx.emoji.name == '❔':
-        user_dm = await client.get_user(ctx.user_id).create_dm()
-        await user_dm.send(embed=Embed(title="Predicted Prompt", color=message.author.color, description=GRADCL.predict(attachments[0].url, "chen-moat2", 0.4, True, True, api_name="/classify")[1]).set_image(url=attachments[0].url))
-        return
+    # if ctx.emoji.name == '❔':
+        # user_dm = await client.get_user(ctx.user_id).create_dm()
+        # await user_dm.send(embed=Embed(title="Predicted Prompt", color=discord.Color.from_rgb(*CONFIG.get("EMBED_COLOR"))), description=GRADCL.predict(attachments[0].url, "chen-moat2", 0.4, True, True, api_name="/classify")[1]).set_image(url=attachments[0].url))
+        # return
     metadata = OrderedDict()
     tasks = [read_attachment_metadata(i, attachment, metadata) for i, attachment in enumerate(attachments)]
-    await asyncio.gather(*tasks) #this code is amazing. -yoinked
+    await asyncio.gather(*tasks) #this code is amazing. -yoinked; yes, it is - itsolegdm
     if not metadata:
         return
     user_dm = await client.get_user(ctx.user_id).create_dm()
@@ -330,46 +354,33 @@ async def on_raw_reaction_add(ctx: RawReactionActionEvent):
                     custom_view = MyView()
                     custom_view.metadata = data
                     await user_dm.send(view=custom_view, embed=embed, mention_author=False)
-                except Exception as e:
-                    print(e)
-                    txt = "## >w<\nuh oh! pi-chan did a fucky wucky and cant parse it into a neat view, so heres the raw content\n## >w<\n" + data
+                except:
+                    print(traceback.format_exc())
+                    txt = "uh oh! PI-chan did a fucky wucky and cant pawse it into a neat view, so hewes the raw content\n >w<"
                     await user_dm.send(txt)
+                    with io.StringIO() as f:
+                        f.write(data)
+                        f.seek(0)
+                        await user_dm.send(file=File(f, "parameters.yaml"))
+            elif 'Software' in data:
+                if isinstance(data, str):
+                    data = json.loads(data)
+                embed = get_embed_nai(data, message)
+                embed.set_image(url=attachment.url)
+                custom_view = MyView()
+                custom_view.metadata = data
+                await user_dm.send(view=custom_view, embed=embed, mention_author=False)
             else:
-                img_type = "ComfyUI" if "\"inputs\"" in data else "NovelAI"
+                if "\"inputs\"" not in data:
+                    continue
                 
                 i = 0
-                if img_type=="NovelAI":
-                    x = json.loads(data)
-                    if "sui_image_params" in x.keys():
-                        t = x['sui_image_params'].copy()
-                        del x['sui_image_params']
-                        for key in t:
-                            t[key] = str(t[key])
-                        x = x|t
-                        embed = Embed(title="Swarm Parameters", color=message.author.color)
-                    else:
-                        embed = Embed(title="Nai Parameters", color=message.author.color)
-                    if "Comment" in x.keys():
-                        t = x['Comment'].replace(r'\"', '"')
-                        t = json.loads(t)
-                        for key in t:
-                            t[key] = str(t[key])
-                        x = x | t
-                        del x['Comment']
-                        del x['Description']
-                    for k in x.keys():
-                        i += 1
-                        if i >= 25:
-                            continue
-                        embed.add_field(name=k, value=str(x[k])[:1023], inline=True)
-                    #await user_dm.send(embed=embed, mention_author=False)
-                else:
-                    embed = Embed(title="ComfyUI Parameters", color=message.author.color)
-                    for enum, dax in enumerate(comfyui_get_data(data)):
-                        i += 1
-                        if i >= 25:
-                            continue
-                        embed.add_field(name=f"{dax['type']} {enum+1} (beta)", value=dax['val'], inline=True)
+                embed = Embed(title="ComfyUI Parameters", color=discord.Color.from_rgb(*CONFIG.get("EMBED_COLOR")))
+                for enum, dax in enumerate(comfyui_get_data(data)):
+                    i += 1
+                    if i >= 25:
+                        break # why the hell continue? just break...
+                    embed.add_field(name=f"{dax['type']} {enum+1} (beta)", value=dax['val'], inline=True)
                 embed.set_footer(text=f'Posted by {message.author}', icon_url=message.author.display_avatar)
                 embed.set_image(url=attachment.url)
                 await user_dm.send(embed=embed, mention_author=False)
@@ -379,9 +390,9 @@ async def on_raw_reaction_add(ctx: RawReactionActionEvent):
                     f.seek(0)
                     await user_dm.send(file=File(f, "parameters.json"))
         
-        except Exception as e:
+        except:
             print(data)
-            print(e)
+            print(traceback.format_exc())
             pass
 
 
@@ -397,18 +408,20 @@ async def message_command(ctx: ApplicationContext, message: Message):
     tasks = [read_attachment_metadata(i, attachment, metadata) for i, attachment in enumerate(attachments)]
     await asyncio.gather(*tasks)
     if not metadata:
-        await ctx.respond(f"This post contains no image generation data.\n{message.author.mention} needs to install [this extension](<https://github.com/ashen-sensored/sd_webui_stealth_pnginfo>).", ephemeral=True)
+        await ctx.respond(f"This post contains no image generation data.", ephemeral=True)
         return
-    response = json.dumps(metadata, sort_keys=True, indent=2)
+    print(metadata.values())
+    response = "\n\n".join(str(value) for value in metadata.values())
     if len(response) < 1980:
-        await ctx.respond(f"```yaml\n{response}```", ephemeral=True)
+        await message.reply(f"```yaml\n{response}```")
     else:
         with io.StringIO() as f:
             f.write(response)
             f.seek(0)
-            await ctx.respond(file=File(f, "parameters.yaml"), ephemeral=True)
-@client.message_command(name="View Parameters/Prompt")
-async def dddddd(ctx: ApplicationContext, message: Message):
+            await message.reply(file=File(f, "parameters.yaml"), mention_author=False)
+            await ctx.respond("Done!")
+@client.message_command(name="Print Parameters/Prompt")
+async def print_params(ctx: ApplicationContext, message: Message):
     """Get a formatted list of parameters for every image in this post."""
     attachments = [a for a in message.attachments if a.filename.lower().endswith(".png")]
     if not attachments:
@@ -419,34 +432,55 @@ async def dddddd(ctx: ApplicationContext, message: Message):
     tasks = [read_attachment_metadata(i, attachment, metadata) for i, attachment in enumerate(attachments)]
     await asyncio.gather(*tasks)
     if not metadata:
-        await ctx.respond(f"This post contains no image generation data.\n{message.author.mention} needs to install [this extension](<https://github.com/ashen-sensored/sd_webui_stealth_pnginfo>).", ephemeral=True)
+        await ctx.respond(f"This post contains no image generation data.", ephemeral=True)
         return
     user_dm = await client.get_user(ctx.user.id).create_dm()
     for attachment, data in [(attachments[i], data) for i, data in metadata.items()]:
         try:
-
             if 'Steps:' in data:
-                params = get_params_from_string(data)
-                embed = get_embed(params, message)
+                try:
+                    params = get_params_from_string(data)
+                    embed = get_embed(params, message)
+                    embed.set_image(url=attachment.url)
+                    custom_view = MyView()
+                    custom_view.metadata = data
+                    await message.reply(view=custom_view, embed=embed, mention_author=False)
+                    await ctx.respond("Done!")
+                except Exception as e:
+                    print(traceback.format_exc())
+                    txt = "uh oh! PI-chan did a fucky wucky and cant pawse it into a neat view\n >w<"
+                    await ctx.respond(txt)
+            elif 'Software' in data:
+                if isinstance(data, str):
+                    data = json.loads(data)
+                embed = get_embed_nai(data, message)
                 embed.set_image(url=attachment.url)
                 custom_view = MyView()
                 custom_view.metadata = data
-                await ctx.respond(view=custom_view, embed=embed, mention_author=False)
-            else :
-                img_type = "ComfyUI" if "\"inputs\"" in data else "NovelAI"
-                embed = Embed(title=img_type+" Parameters", color=message.author.color)
+                await message.reply(view=custom_view, embed=embed, mention_author=False)
+            else:
+                if "\"inputs\"" not in data:
+                    continue
+
+                i = 0
+                embed = Embed(title="ComfyUI Parameters", color=discord.Color.from_rgb(*CONFIG.get("EMBED_COLOR")))
                 for enum, dax in enumerate(comfyui_get_data(data)):
-                    embed.add_field(name=f"{dax['type']} {enum+1} (beta)", value=dax['val'], inline=False)
+                    i += 1
+                    if i >= 25:
+                        break  # why the hell continue? just break...
+                    embed.add_field(name=f"{dax['type']} {enum + 1} (beta)", value=dax['val'], inline=True)
                 embed.set_footer(text=f'Posted by {message.author}', icon_url=message.author.display_avatar)
                 embed.set_image(url=attachment.url)
+                await message.reply(embed=embed, mention_author=False)
                 with io.StringIO() as f:
                     indented = json.dumps(json.loads(data), sort_keys=True, indent=2)
                     f.write(indented)
                     f.seek(0)
-                    await ctx.respond(embed=embed, mention_author=False, file=File(f, "parameters.json"))
-        
-        except:
+                    await message.reply(file=File(f, "parameters.json"), mention_author=False)
+                    await ctx.respond("Done!")
+
+        except Exception:
+            print(data)
+            print(traceback.format_exc())
             pass
-
-
-client.run(os.environ["BOT_TOKEN"])
+client.run(CONFIG.get("BOT_TOKEN"))

@@ -9,3 +9,7 @@ __pycache__/
 *.cmd
 *.bat
 *.stat.py
+.venv/
+config.toml
+.idea/
+config.toml
