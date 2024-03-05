@@ -215,9 +215,10 @@ async def privacy(ctx):
     base.add_field(name="What we collect", value="Other than simple data from your user (mainly username, role color) not much else other than when an image is sent in a **monitored channel**, the bot downloads it to its RAM and processes it.\n***We do not store any of your data/images.***", inline=False)
     base.add_field(name="What we use/store", value="Whenever the bot has an error decoding an image, it will print out the error and data to the console. The data consists of the raw bytes in the image metadata. Whenever a mod/admin toggles a channel on/off, the bot will save the ID to storage in case of it crashing. Other than that, that is all we use/store.", inline=False)
     base.add_field(name="What we share", value="***We do not share any of your data/images.*** There's no use for them lol.", inline=False)
-    base.add_field(name="Open Source? Where?!", value="Yes, its [here](https://github.com/itsolegdm/PI-Chan). We are licensed under the [MIT License](https://github.com/itsolegdm/PI-Chan/blob/main/LICENSE). \nThe code is based off salt's base and yoinked's's fork. ", inline=False)
+    base.add_field(name="Open Source? Where?!", value="Yes, its [here](https://github.com/itsolegdm/PI-Chan). We are licensed under the [MIT License](https://github.com/itsolegdm/PI-Chan/blob/main/LICENSE). \nThe code is based off salt's base and yoinked's fork. ", inline=False)
     base.set_footer(text=f"Maintained by @itsolegdm, this channel is {'not' if not ctx.channel_id in monitored else ''} monitored", icon_url=ctx.author.display_avatar)
     # base.set_image(url="https://cdn.discordapp.com/avatars/1159983729591210004/8666dba0c893163fcf0e01629e85f6e8?size=1024")
+    await ctx.respond(embed=base, ephemeral=True)
     await ctx.respond(embed=base, ephemeral=True)
 # @client.slash_command()
 # async def toggle_channel(ctx: ApplicationContext, channel_id):
@@ -307,9 +308,9 @@ async def read_attachment_metadata(i: int, attachment: Attachment, metadata: Ord
             if img.info:
                 if 'parameters' in img.info:
                     info = img.info['parameters']
-                elif 'prompt' in img.info:
+                elif 'prompt' in img.info or 'Prompt' in img.info:
                     info = img.info['prompt']
-                elif img.info["Software"] == "NovelAI":
+                elif "Software" in img.info:
                     info = img.info
                     # info["Software"] = img.info["Software"]
                     # info["Source"] = img.info["Source"]
