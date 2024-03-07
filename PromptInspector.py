@@ -69,7 +69,7 @@ def get_params_from_string(param_str):
 def get_embed(embed_dict, context: Message, req_author=None):
     print(req_author)
     embed = Embed(
-        title=f"Parsed ,etadata. Requested by @{req_author}" if req_author is not None else "Parsed metadata",
+        title=f"Parsed metadata. Requested by @{req_author}" if req_author is not None else "Parsed metadata",
         color=discord.Color.from_rgb(*EMBED_COLOR))
     i = 0
     for key, value in embed_dict.items():
