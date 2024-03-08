@@ -468,15 +468,27 @@ async def view_raw_data(ctx: ApplicationContext, message: Message):
     print(metadata.values())
     response = "\n\n".join(str(value) for value in metadata.values())
     custom_view = ServerView()
-    if len(response) < 1900:
-        await message.reply(f"**Requested by @{ctx.author.name}**\n```yaml\n{response}```", mention_author=False, view=custom_view)
-        await ctx.delete()
-    else:
-        with io.StringIO() as f:
-            f.write(response)
-            f.seek(0)
-            await message.reply(f"**Requested by @{ctx.author.name}**", file=File(f, "parameters.yaml"), mention_author=False, view=custom_view)
+    user_roles = [role.id for role in ctx.author.roles]
+    if any(role_id in CAN_DELETE_EMBED for role_id in user_roles):
+        if len(response) < 1900:
+            await message.reply(f"**Requested by @{ctx.author.name}**\n```yaml\n{response}```", mention_author=False, view=custom_view)
             await ctx.delete()
+        else:
+            with io.StringIO() as f:
+                f.write(response)
+                f.seek(0)
+                await message.reply(f"**Requested by @{ctx.author.name}**", file=File(f, "parameters.yaml"), mention_author=False, view=custom_view)
+                await ctx.delete()
+    else:
+        await ctx.respond(f"Sorry, but you can't use it here. I'll send you a DM :3 ", ephemeral=True)
+        user_dm = await client.get_user(ctx.user_id).create_dm()
+        if len(response) < 1900:
+            await user_dm.send(f"**Requested by @{ctx.author.name}**\n```yaml\n{response}```", mention_author=False, view=custom_view)
+        else:
+            with io.StringIO() as f:
+                f.write(response)
+                f.seek(0)
+                await user_dm.send(f"**Requested by @{ctx.author.name}**", file=File(f, "parameters.yaml"), mention_author=False, view=custom_view)
 
 
 @client.message_command(name="Print Parameters/Prompt")
@@ -493,7 +505,15 @@ async def print_params(ctx: ApplicationContext, message: Message):
     if not metadata:
         await ctx.respond(f"This post contains no image generation data.", ephemeral=True)
         return
+    user_roles = [role.id for role in ctx.author.roles]
     user_dm = await client.get_user(ctx.user.id).create_dm()
+    if any(role_id in CAN_DELETE_EMBED for role_id in user_roles):
+        sendr = message.reply
+        ctxr = ctx.delete
+    else:
+        sendr = user_dm.send
+        ctxr = lambda: ctx.respond(f"Sorry, but you can't use it here. I'll send you a DM :3 ", ephemeral=True)
+
     for attachment, data in [(attachments[i], data) for i, data in metadata.items()]:
         try:
             if 'Steps:' in data:
@@ -504,8 +524,8 @@ async def print_params(ctx: ApplicationContext, message: Message):
                     embed.set_image(url=attachment.url)
                     custom_view = ServerView()
                     custom_view.metadata = data
-                    await message.reply(view=custom_view, embed=embed, mention_author=False)
-                    await ctx.delete()
+                    await sendr(view=custom_view, embed=embed, mention_author=False)
+                    await ctxr()
                 except:
                     print(traceback.format_exc())
                     txt = "uh oh! PI-chan did a fucky wucky and cant pawse it into a neat view\n >w<"
@@ -517,7 +537,8 @@ async def print_params(ctx: ApplicationContext, message: Message):
                 embed.set_image(url=attachment.url)
                 custom_view = ServerView()
                 custom_view.metadata = data
-                await message.reply(view=custom_view, embed=embed, mention_author=False)
+                await sendr(view=custom_view, embed=embed, mention_author=False)
+                await ctxr()
             else:
                 if "\"inputs\"" not in data:
                     continue
@@ -531,13 +552,13 @@ async def print_params(ctx: ApplicationContext, message: Message):
                     embed.add_field(name=f"{dax['type']} {enum + 1} (beta)", value=dax['val'], inline=True)
                 embed.set_footer(text=f'Posted by {message.author}', icon_url=message.author.display_avatar)
                 embed.set_image(url=attachment.url)
-                await message.reply(embed=embed, mention_author=False)
+                await ctxr()
+                await sendr(embed=embed, mention_author=False)
                 with io.StringIO() as f:
                     indented = json.dumps(json.loads(data), sort_keys=True, indent=2)
                     f.write(indented)
                     f.seek(0)
-                    await message.reply(file=File(f, "parameters.json"), mention_author=False)
-                    await ctx.delete()
+                    await sendr(file=File(f, "parameters.json"), mention_author=False)
 
         except:
             print(data)
